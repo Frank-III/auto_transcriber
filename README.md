@@ -13,7 +13,7 @@ Auto-Transcriber is an experimental, openai-powered translation tool, generating
 ## How to start with?
 ```sh
 git clone //repo
-pip install requirements.txt
+pip install -r requirements.txt
 streamlit run app.py
 ```
 
