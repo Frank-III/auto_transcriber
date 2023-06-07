@@ -6,22 +6,27 @@ from async_better import process_api_requests_from_file, get_all_token_comsumpti
 import asyncio  # for running API calls concurrently
 from utils import Config, create_config
 import logging  # for logging rate limit warnings and other messages
-#import pathlib
-#import subprocess
-import os, glob
+# import pathlib
+# import subprocess
+import os
+import glob
+
 
 def check_tmpfile(save_folder: str) -> None:
-    if not os.path.exists(save_folder + "\\tmp"):
+    if not os.path.exists(save_folder + "/tmp"):
         st.sidebar.info('tmp file directory does not exist', icon="ℹ️")
-        os.mkdir(save_folder + "\\tmp")
+        os.mkdir(save_folder + "/tmp")
         st.sidebar.info('tmp file directory created', icon="ℹ️")
     else:
         st.sidebar.success("tmp file directory existed", icon="✅")
 
-def write_srt(srt_filepath:str, model: str, file_path:str) -> pl.DataFrame:
+
+def write_srt(srt_filepath: str, model: str, file_path: str, cuda: bool = False) -> pl.DataFrame:
     if not os.path.isfile(srt_filepath):
-        model = WhisperModel(model, device="cuda", compute_type="float16")
-        segments, info = model.transcribe(file_path, beam_size=5, word_timestamps=True)
+        model = WhisperModel(
+            model, device="cuda" if cuda else "cpu", compute_type="float16")
+        segments, info = model.transcribe(
+            file_path, beam_size=5, word_timestamps=True)
         srt_file = parse_srt(read_segments(segments))
         srt_file.write_csv(srt_filepath)
         st.sidebar.info('srt file created', icon="ℹ️")
@@ -30,15 +35,23 @@ def write_srt(srt_filepath:str, model: str, file_path:str) -> pl.DataFrame:
         st.sidebar.success("srt file existed", icon="✅")
     return srt_file
 
-def gen_request(requests_filepath:str, srt_filepath:str) -> None:
+
+def gen_request(requests_filepath: str, srt_filepath: str) -> None:
     if not os.path.isfile(requests_filepath):
+        # TODO: change it
+        example_q = "you should translate the belowing 3 lines to chinese. You should return exactly 3 Chinese sentences end with '。'" + \
+            """
+        1. The relationship between the F1 teams and the FIA has been far from happy this season. 2. Every race week there seems to be complaints about their handling of the sport and the decisions made by race control. 3. The situation is worsening and a split between the FIA and F1 seems to be becoming more likely.
+        """
+        example_a = """1. F1车队和FIA之间的关系在本赛季远非愉快。2. 每个比赛周似乎都会有关于他们处理运动和赛事控制所做决定的抱怨。3. 情况正在恶化，FIA和F1之间的分裂似乎越来越可能。"""
         srt_file = pl.read_csv(srt_filepath)
-        request_format = gen_request_file(srt_file)
+        request_format = gen_request_file(srt_file, example_q, example_a)
         with open(requests_filepath, "w", encoding="Utf-8") as file:
             file.write(request_format.write_ndjson())
         st.sidebar.info('request file created', icon="ℹ️")
     else:
         st.sidebar.success("request file existed", icon="✅")
+
 
 def call_openai(args: Config) -> None:
     if not os.path.isfile(args.save_filepath):
@@ -67,20 +80,21 @@ def call_openai(args: Config) -> None:
         st.sidebar.success("transcribe file existed", icon="✅")
 
 
-def display_diff_pd(srt_file:pl.DataFrame, transcribed:pl.DataFrame):
-    ori_dfs = {idx:val for (idx, val) in srt_file.lazy().with_columns(
-        ((pl.col("is_end") - 1) // 10).alias("group")) \
+def display_diff_pd(srt_file: pl.DataFrame, transcribed: pl.DataFrame):
+    ori_dfs = {idx: val for (idx, val) in srt_file.lazy().with_columns(
+        ((pl.col("is_end") - 1) // 10).alias("group"))
         .collect().to_pandas().groupby("group")}
 
     each_batch = get_each_batch(transcribed, to_pandas=True)
     selected_batch = st.selectbox('select a batch:', each_batch.keys())
-    tran_ = each_batch[selected_batch]#.to_pandas()
-    or_ = ori_dfs[selected_batch]#.to_pandas()
+    tran_ = each_batch[selected_batch]  # .to_pandas()
+    or_ = ori_dfs[selected_batch]  # .to_pandas()
     col4, col5 = st.columns([3, 3])
     or_df = col4.experimental_data_editor(or_, num_rows="dynamic")
     e_df = col5.experimental_data_editor(tran_, num_rows="dynamic")
 
-def display_diff(srt_file:pl.DataFrame, transcribed:pl.DataFrame):
+
+def display_diff(srt_file: pl.DataFrame, transcribed: pl.DataFrame):
     ori_dfs = srt_file.lazy().with_columns(
         ((pl.col("is_end") - 1) // 10).alias("group")) \
         .collect().partition_by("group", maintain_order=True, as_dict=True)
@@ -92,15 +106,17 @@ def display_diff(srt_file:pl.DataFrame, transcribed:pl.DataFrame):
     or_df = col4.experimental_data_editor(or_, num_rows="dynamic")
     e_df = col5.experimental_data_editor(tran_, num_rows="dynamic")
 
-def write_transcribed(srt_file:pl.DataFrame, transcribed:pl.DataFrame,save_folder:str):
+
+def write_transcribed(srt_file: pl.DataFrame, transcribed: pl.DataFrame, save_folder: str):
     combined = align_ori_trans(srt_file, transcribed)
-    combined.write_csv(save_folder + "\\tmp\\combined.csv")
-    with open(save_folder + "\\bilingal.srt", "w", encoding="Utf-8") as file:
-        file.write("\n\n".join(["\n".join(row) for row in combined.iter_rows()]))
-    with open(save_folder + "\\chinese.srt", "w", encoding="Utf-8") as file:
+    combined.write_csv(save_folder + "/tmp/combined.csv")
+    with open(save_folder + "/bilingal.srt", "w", encoding="Utf-8") as file:
+        file.write( "\n\n".join(["\n".join(row)
+                    for row in combined.iter_rows()]))
+    with open(save_folder + "/chinese.srt", "w", encoding="Utf-8") as file:
         file.write("\n\n".join(
             ["\n".join(row) for row in combined.select(pl.col("is_end", "timestamp", "transcribed")).iter_rows()]))
-    with open(save_folder + "\\english.srt", "w", encoding="Utf-8") as file:
+    with open(save_folder + "/english.srt", "w", encoding="Utf-8") as file:
         file.write(
             "\n\n".join(["\n".join(row) for row in combined.select(pl.col("is_end", "timestamp", "text")).iter_rows()]))
 
@@ -130,6 +146,7 @@ def home():
     # content = st_ace()
     # content
 
+
 def from_file():
     import streamlit as st
     if 'btn_clicked' not in st.session_state:
@@ -147,13 +164,14 @@ def from_file():
 
     if col3.button("Generate", on_click=callback) or st.session_state['btn_clicked']:
         if not (video_path and folder_path):
-            st.warning('you should fill both `video_link` and `folder_path`', icon="⚠️")
+            st.warning(
+                'you should fill both `video_link` and `folder_path`', icon="⚠️")
         else:
             # args = Config(save_folder=folder_path,
             #               file_path=video_path,
-            #               srt_filepath=folder_path + '\\tmp\\srt.csv',
-            #               requests_filepath=folder_path + '\\tmp\\request.jsonl',
-            #               save_filepath=folder_path + '\\tmp\\transcribe_result.csv',
+            #               srt_filepath=folder_path + '/tmp/srt.csv',
+            #               requests_filepath=folder_path + '/tmp/request.jsonl',
+            #               save_filepath=folder_path + '/tmp/transcribe_result.csv',
             #               api_key= os.getenv("OPENAI_API_KEY"))
             st.sidebar.write("Logging:\n")
             args = create_config(folder_path, file_path=video_path)
@@ -166,9 +184,10 @@ def from_file():
             transcribed = parse_transribed(args.save_filepath)
 
             with st.expander("📝See details for each batch"):
-                st.write(transcribed.filter(pl.col("num_sentences") != 10).select("group","num_sentences").to_struct(name="value_count").to_list())
+                st.write(transcribed.filter(pl.col("num_sentences") != 10).select(
+                    "group", "num_sentences").to_struct(name="value_count").to_list())
 
-            #add blocks to manipulate dataframe(as the implemenation here could no change the original one)
+            # add blocks to manipulate dataframe(as the implemenation here could no change the original one)
             display_diff_pd(srt_file, transcribed)
 
             form = st.form(key='continue?')
@@ -181,7 +200,6 @@ def from_file():
             if not_create:
                 st.info("Sorry for not so perfect transcription", icon="💔")
                 st.stop()
-
 
             write_transcribed(srt_file, transcribed, args.save_folder)
             st.success("Horay!\nDone in one call!", icon="🧋")
@@ -200,7 +218,8 @@ def from_link():
     folder_path = col2.text_input("Place path to saved folder here 👇")
     if col3.button("Generate", on_click=callback) or st.session_state['btn_clicked']:
         if not (video_link and folder_path):
-            st.warning('you should fill both `video_link` and `folder_path`', icon="⚠️")
+            st.warning(
+                'you should fill both `video_link` and `folder_path`', icon="⚠️")
         else:
             try:
                 from yt_dlp import YoutubeDL
@@ -220,10 +239,10 @@ def from_link():
                 with YoutubeDL(ydl_opts) as ydl:
                     ydl.download(video_link)
             except e as e:
-                throw(e)
+                raise e
 
             st.sidebar.write("Logging:\n")
-            video_name = glob.glob(folder_path+"\\*.wav")[0]
+            video_name = glob.glob(folder_path+"/*.wav")[0]
             args = create_config(folder_path, file_path=video_name)
             st.success('Video downloaded!', icon="✅")
 
@@ -250,9 +269,9 @@ def from_link():
                 st.info("Sorry for not so perfect transcription", icon="💔")
                 st.stop()
 
-
             write_transcribed(srt_file, transcribed, args.save_folder)
             st.success("Horay!\nDone in one call!", icon="🧋")
+
 
 st.set_page_config(
     page_title="Transcribe App",
@@ -267,5 +286,6 @@ page_names_to_funcs = {
 }
 
 st.sidebar.markdown("# Main Menu")
-demo_name = st.sidebar.selectbox("start with a video or YT link", page_names_to_funcs.keys())
+demo_name = st.sidebar.selectbox(
+    "start with a video or YT link", page_names_to_funcs.keys())
 page_names_to_funcs[demo_name]()
