@@ -1,0 +1,9 @@
+aiohttp==3.8.4
+dataclasses_json==0.5.7
+faster_whisper==0.6.0
+pandas==2.0.2
+polars==0.18.0
+streamlit==1.23.1
+streamlit_ace==0.1.1
+tiktoken==0.4.0
+yt_dlp==2023.3.4
